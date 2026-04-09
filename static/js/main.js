@@ -251,13 +251,23 @@ function handleExampleClick() {
 function calculateAndVisualize(originIata, destinationIata) {
     if (!originIata || !destinationIata) return;
     const data = calculateRouteLocally(originIata, destinationIata);
+    const algorithmMode = document.getElementById('algorithm-select').value;
     clearScene();
-    if (data.path) {
-        visualizeArc(data.path, 0x28a745, 'astar');
-        const directPath = [originIata, destinationIata];
-        visualizeArc(directPath, 0xffc107, 'direct');
-        displayResults(data.astar_distance, data.direct_distance, data.path);
+    const directPath = [originIata, destinationIata];
+    visualizeArc(directPath, 0xffc107, 'direct');
+
+    if (data.astar_path) {
+        if (algorithmMode === 'astar' || algorithmMode === 'both') {
+            visualizeArc(data.astar_path, 0x28a745, 'astar');
+        }
+        if (algorithmMode === 'dijkstra' || algorithmMode === 'both') {
+            if (data.dijkstra_path) {
+                visualizeArc(data.dijkstra_path, 0x0dcaf0, 'dijkstra');
+            }
+        }
     }
+
+    displayRouteResults(data, algorithmMode);
 }
 
 // --- 시뮬레이션 로직 ---
@@ -395,45 +405,77 @@ function visualizeArc(path, color, name) {
     }
     if (curvePoints.length < 2) { return; }
     const pathCurve = new THREE.CatmullRomCurve3(curvePoints);
-    const tubeRadius = (name === 'astar') ? 0.03 : 0.02;
-    const material = (name === 'astar') 
-        ? new THREE.MeshPhongMaterial({ color: color, transparent: true, opacity: 0.9, emissive: color, emissiveIntensity: 0.3 }) 
-        : new THREE.MeshPhongMaterial({ color: color, transparent: true, opacity: 0.8 });
+    let tubeRadius = 0.02;
+    if (name === 'astar') tubeRadius = 0.03;
+    else if (name === 'dijkstra') tubeRadius = 0.028;
+
+    let material;
+    if (name === 'astar') {
+        material = new THREE.MeshPhongMaterial({ color: color, transparent: true, opacity: 0.9, emissive: color, emissiveIntensity: 0.3 });
+    } else if (name === 'dijkstra') {
+        material = new THREE.MeshPhongMaterial({ color: color, transparent: true, opacity: 0.88, emissive: color, emissiveIntensity: 0.25 });
+    } else {
+        material = new THREE.MeshPhongMaterial({ color: color, transparent: true, opacity: 0.8 });
+    }
     const geometry = new THREE.TubeGeometry(pathCurve, 256, tubeRadius, 8, false);
     const arc = new THREE.Mesh(geometry, material);
     arc.name = name;
     scene.add(arc);
 }
 
-function displayResults(astarDistance, directDistance, path) {
+function formatPathLine(path) {
+    return path.map((iata) => (airportsData[iata] ? `${airportsData[iata].name} (${iata})` : iata)).join(' → ');
+}
+
+function displayRouteResults(data, algorithmMode) {
     const resultsPanel = document.getElementById('results-panel');
-    const directKm = Math.round(directDistance);
-    let pathString = path.map(iata => airportsData[iata] ? `${airportsData[iata].name} (${iata})` : iata).join(' → ');
+    const directKm = Math.round(data.direct_distance);
+    const fallbackPath = data.fallback_path || [];
 
-    if (astarDistance !== null) {
-        const astarKm = Math.round(astarDistance);
-        const difference = Math.round(directKm - astarKm);
-
-        let content = `
-            <div class="path-result astar-path"><strong>A* 효율 비용:</strong> ${astarKm} units</div>
-            <div class="path-result direct-path"><strong>직선 거리 비용:</strong> ${directKm} units</div>
-            <p class="text-center mt-2"><strong>경로:</strong> ${pathString}</p>
-        `;
-
-        if (difference > 0) {
-            content += `<p class="text-center mt-3">A* 알고리즘이 <strong>${difference} units</strong> 만큼 더 효율적인 경로를 찾았습니다.</p>
-                      <small class="d-block text-center text-muted mt-2">(효율 비용은 연료, 항로 이용료 등을 종합한 가상 단위입니다)</small>`;
-        } else {
-            content += `<p class="text-center mt-3">이 구간은 직선 항로가 더 효율적입니다.</p>`;
-        }
-        resultsPanel.innerHTML = content;
-    } else {
+    if (!data.astar_path) {
         resultsPanel.innerHTML = `
             <div class="path-result direct-path"><strong>직선 거리:</strong> ${directKm} km</div>
-            <p class="text-center mt-2"><strong>경로:</strong> ${pathString}</p>
-            <p class="text-center mt-3">탐색 가능한 A* 경로가 없습니다.</p>
+            <p class="text-center mt-2"><strong>경로:</strong> ${formatPathLine(fallbackPath)}</p>
+            <p class="text-center mt-3">그래프상 탐색 가능한 경로가 없습니다. (직항만 표시)</p>
         `;
+        return;
     }
+
+    const astarKm = Math.round(data.astar_distance);
+    const dijkstraKm = data.dijkstra_distance != null ? Math.round(data.dijkstra_distance) : null;
+    const sameCost =
+        dijkstraKm != null &&
+        Math.abs(data.astar_distance - data.dijkstra_distance) < 0.01;
+    const sameSequence =
+        data.dijkstra_path &&
+        data.astar_path.join(',') === data.dijkstra_path.join(',');
+
+    let content = `<div class="path-result direct-path"><strong>직선 거리(대권):</strong> ${directKm} km</div>`;
+
+    if (algorithmMode === 'astar' || algorithmMode === 'both') {
+        content += `<div class="path-result astar-path"><strong>A* 누적 비용:</strong> ${astarKm} units</div>`;
+        content += `<p class="text-center mt-2 small"><strong>A* 경로:</strong> ${formatPathLine(data.astar_path)}</p>`;
+    }
+    if ((algorithmMode === 'dijkstra' || algorithmMode === 'both') && data.dijkstra_path) {
+        content += `<div class="path-result dijkstra-path"><strong>다익스트라 누적 비용:</strong> ${dijkstraKm} units</div>`;
+        content += `<p class="text-center mt-2 small"><strong>다익스트라 경로:</strong> ${formatPathLine(data.dijkstra_path)}</p>`;
+    }
+
+    if (algorithmMode === 'both' && data.dijkstra_path) {
+        if (sameCost && sameSequence) {
+            content += `<p class="text-center mt-3 small">동일한 최소 비용·동일 경로 (휴리스틱이 허용 가능하면 A*도 최단과 일치)</p>`;
+        } else if (sameCost && !sameSequence) {
+            content += `<p class="text-center mt-3 small">비용은 같고 경로만 다른 경우(동률)일 수 있습니다.</p>`;
+        }
+    }
+
+    const diffVersusDirect = Math.round(directKm - astarKm);
+    if (diffVersusDirect > 0) {
+        content += `<p class="text-center mt-2">그래프 최단 비용이 직선 거리(km)보다 <strong>${diffVersusDirect}</strong>만큼 작게 나올 수 있습니다. (km와 units는 다른 척도입니다)</p>`;
+    }
+
+    content += `<small class="d-block text-center text-muted mt-2">edge 비용 = 구간 거리(km) × ${EFFICIENCY_FACTOR}</small>`;
+    resultsPanel.innerHTML = content;
 }
 
 function latLonToVector3(lat, lon, radius) {
@@ -461,7 +503,7 @@ function haversineDistance(airport1, airport2) {
 function clearScene() {
     for (let i = scene.children.length - 1; i >= 0; i--) {
         const obj = scene.children[i];
-        if (obj.type === 'Mesh' && (obj.name === 'astar' || obj.name === 'direct' || obj.name === 'sim_path')) {
+        if (obj.type === 'Mesh' && (obj.name === 'astar' || obj.name === 'dijkstra' || obj.name === 'direct' || obj.name === 'sim_path')) {
             scene.remove(obj);
             obj.geometry.dispose();
             obj.material.dispose();
@@ -570,17 +612,36 @@ function buildAirportGraph() {
 
 function calculateRouteLocally(originIata, destinationIata) {
     if (!originIata || !destinationIata || !airportsData[originIata] || !airportsData[destinationIata]) {
-        return { path: null, astar_distance: null, direct_distance: null };
+        return {
+            astar_path: null,
+            dijkstra_path: null,
+            astar_distance: null,
+            dijkstra_distance: null,
+            direct_distance: null,
+            fallback_path: null
+        };
     }
-    const [path, astarCost] = aStarSearch(originIata, destinationIata);
     const directDistance = haversineDistance(airportsData[originIata], airportsData[destinationIata]);
-    if (path) {
-        return { path, astar_distance: astarCost, direct_distance: directDistance };
+    const [astarPath, astarCost] = aStarSearch(originIata, destinationIata);
+    const [dijkstraPath, dijkstraCost] = dijkstraSearch(originIata, destinationIata);
+
+    if (astarPath) {
+        return {
+            astar_path: astarPath,
+            dijkstra_path: dijkstraPath,
+            astar_distance: astarCost,
+            dijkstra_distance: dijkstraPath ? dijkstraCost : null,
+            direct_distance: directDistance,
+            fallback_path: null
+        };
     }
     return {
-        path: [originIata, destinationIata],
+        astar_path: null,
+        dijkstra_path: null,
         astar_distance: null,
-        direct_distance: directDistance
+        dijkstra_distance: null,
+        direct_distance: directDistance,
+        fallback_path: [originIata, destinationIata]
     };
 }
 
@@ -624,6 +685,49 @@ function aStarSearch(startNode, goalNode) {
                 const hScore = haversineDistance(airportsData[neighbor], airportsData[goalNode]);
                 fScore[neighbor] = tentativeGScore + hScore;
                 openSet.push([fScore[neighbor], neighbor]);
+            }
+        });
+    }
+
+    return [null, Infinity];
+}
+
+function dijkstraSearch(startNode, goalNode) {
+    if (!airportGraph[startNode] || !airportGraph[goalNode]) {
+        return [null, Infinity];
+    }
+
+    const dist = {};
+    const cameFrom = {};
+    Object.keys(airportGraph).forEach((node) => {
+        dist[node] = Infinity;
+    });
+    dist[startNode] = 0;
+    const openSet = [[0, startNode]];
+
+    while (openSet.length > 0) {
+        openSet.sort((a, b) => a[0] - b[0]);
+        const [d, current] = openSet.shift();
+        if (d > dist[current]) continue;
+
+        if (current === goalNode) {
+            const path = [];
+            let node = current;
+            while (cameFrom[node]) {
+                path.push(node);
+                node = cameFrom[node];
+            }
+            path.push(startNode);
+            return [path.reverse(), dist[goalNode]];
+        }
+
+        const neighbors = airportGraph[current] || [];
+        neighbors.forEach(([neighbor, edge]) => {
+            const alt = dist[current] + edge;
+            if (alt < dist[neighbor]) {
+                dist[neighbor] = alt;
+                cameFrom[neighbor] = current;
+                openSet.push([alt, neighbor]);
             }
         });
     }

@@ -16,6 +16,7 @@
         #results-panel { margin-top: 20px; }
         .path-result { padding: 10px; border-radius: 5px; margin-bottom: 10px; }
         .astar-path { background: rgba(40, 167, 69, 0.2); border-left: 5px solid #28a745; }
+        .dijkstra-path { background: rgba(13, 202, 240, 0.2); border-left: 5px solid #0dcaf0; }
         .direct-path { background: rgba(255, 193, 7, 0.2); border-left: 5px solid #ffc107; }
     </style>
 </head>
@@ -26,7 +27,7 @@
         <h1 class="h4 text-center mb-4">✈️ 3D 항공 시뮬레이터</h1>
         
         <ul class="nav nav-pills nav-fill mb-3">
-            <li class="nav-item"><a href="#" class="nav-link active" id="mode-search">A* 경로 탐색</a></li>
+            <li class="nav-item"><a href="#" class="nav-link active" id="mode-search">경로 탐색</a></li>
             <li class="nav-item"><a href="#" class="nav-link" id="mode-sim">실시간 시뮬레이션</a></li>
         </ul>
 
@@ -52,6 +53,14 @@
                 <label for="destination" class="form-label">도착지</label>
                 <input type="text" id="destination-search" class="form-control mb-1" placeholder="도착지 검색...">
                 <select id="destination" class="form-select"></select>
+            </div>
+            <div class="mb-3">
+                <label for="algorithm-select" class="form-label">알고리즘</label>
+                <select id="algorithm-select" class="form-select">
+                    <option value="both">A* + 다익스트라 비교</option>
+                    <option value="astar">A* 만</option>
+                    <option value="dijkstra">다익스트라 만</option>
+                </select>
             </div>
             <button id="calculate" class="btn btn-primary w-100">경로 계산</button>
             <button id="show-example" class="btn btn-secondary w-100 mt-2">예시 보기</button>
