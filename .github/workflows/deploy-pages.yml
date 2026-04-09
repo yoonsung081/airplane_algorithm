@@ -32,11 +32,15 @@ jobs:
       # configure-pages는 “Pages 사이트가 이미 존재”할 때만 동작합니다.
       # Pages를 아직 GitHub Actions로 켜지 않은 상태면 GET /pages 가 404가 나므로 생략합니다.
 
+      # 기본 이름 "github-pages"는 Re-run 시 같은 run에 아티팩트가 2개 쌓이며 deploy-pages가 실패할 수 있음
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
+          name: github-pages-${{ github.run_id }}-${{ github.run_attempt }}
           path: .
 
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v5
+        with:
+          artifact_name: github-pages-${{ github.run_id }}-${{ github.run_attempt }}
