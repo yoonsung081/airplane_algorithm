@@ -64,12 +64,10 @@ function init() {
 // --- 필터 및 선택 메뉴 채우기 ---
 function populateFilters() {
     const continentSelect = document.getElementById('continent-filter');
-    const countrySelect = document.getElementById('country-filter');
-    const originSelect = document.getElementById('origin');
-    const destinationSelect = document.getElementById('destination');
+    continentSelect.innerHTML = '';
 
-    // 대륙 필터 채우기
-    const continents = ['All', ...new Set(allAirports.map(a => a.continent))].sort();
+    // 대륙 필터 채우기 (빈 continent 값 제외)
+    const continents = ['All', ...new Set(allAirports.map(a => a.continent).filter(Boolean))].sort();
     continents.forEach(c => continentSelect.add(new Option(c, c)));
 
     updateCountryFilter(); // 국가 필터 초기화
@@ -81,7 +79,7 @@ function updateCountryFilter() {
     countrySelect.innerHTML = ''; // Clear previous options
 
     const filteredAirportsByContinent = (continent === 'All') ? allAirports : allAirports.filter(a => a.continent === continent);
-    const countries = ['All', ...new Set(filteredAirportsByContinent.map(a => a.iso_country))].sort();
+    const countries = ['All', ...new Set(filteredAirportsByContinent.map(a => a.iso_country).filter(Boolean))].sort();
     countries.forEach(c => countrySelect.add(new Option(c, c)));
 
     updateAirportSelects(); // 공항 선택 메뉴 초기화
@@ -127,18 +125,27 @@ function updateAirportSelects() {
 function setupEventListeners() {
     document.getElementById('continent-filter').addEventListener('change', updateCountryFilter);
     document.getElementById('country-filter').addEventListener('change', updateAirportSelects);
-    
-    document.getElementById('continent-search').addEventListener('input', filterDropdownOptions.bind(null, 'continent-filter', allAirports.map(a => a.continent)));
+
+    // 데이터는 load 후에 채워지므로, 검색 시점의 allAirports를 써야 함 (초기 바인드하면 항상 [])
+    document.getElementById('continent-search').addEventListener('input', () => {
+        filterDropdownOptions('continent-filter', allAirports.map(a => a.continent).filter(Boolean));
+    });
     document.getElementById('country-search').addEventListener('input', () => {
         const continent = document.getElementById('continent-filter').value;
         const filteredAirportsByContinent = (continent === 'All') ? allAirports : allAirports.filter(a => a.continent === continent);
-        filterDropdownOptions('country-filter', filteredAirportsByContinent.map(a => a.iso_country));
+        filterDropdownOptions('country-filter', filteredAirportsByContinent.map(a => a.iso_country).filter(Boolean));
     });
     document.getElementById('origin-search').addEventListener('input', updateAirportSelects);
     document.getElementById('destination-search').addEventListener('input', updateAirportSelects);
 
-    document.getElementById('mode-search').addEventListener('click', () => switchMode('search'));
-    document.getElementById('mode-sim').addEventListener('click', () => switchMode('sim'));
+    document.getElementById('mode-search').addEventListener('click', (e) => {
+        e.preventDefault();
+        switchMode('search');
+    });
+    document.getElementById('mode-sim').addEventListener('click', (e) => {
+        e.preventDefault();
+        switchMode('sim');
+    });
     document.getElementById('calculate').addEventListener('click', handleCalculateClick);
     document.getElementById('show-example').addEventListener('click', handleExampleClick);
     document.getElementById('toggle-sim').addEventListener('click', toggleSimulation);
@@ -165,14 +172,20 @@ function filterDropdownOptions(selectId, allPossibleOptions) {
     const searchInput = document.getElementById(selectId.replace('-filter', '-search'));
     const selectElement = document.getElementById(selectId);
     const searchText = searchInput.value.toLowerCase();
+    const previousValue = selectElement.value;
 
     selectElement.innerHTML = '';
-    const filteredOptions = ['All', ...new Set(allPossibleOptions)].sort().filter(option => 
-        option.toLowerCase().includes(searchText)
+    const filteredOptions = ['All', ...new Set(allPossibleOptions.filter(Boolean))].sort().filter((option) =>
+        String(option).toLowerCase().includes(searchText)
     );
-    filteredOptions.forEach(option => selectElement.add(new Option(option, option)));
+    filteredOptions.forEach((option) => selectElement.add(new Option(option, option)));
 
-    // Trigger change to update dependent dropdowns if applicable
+    if (filteredOptions.includes(previousValue)) {
+        selectElement.value = previousValue;
+    } else {
+        selectElement.value = 'All';
+    }
+
     if (selectId === 'continent-filter') {
         updateCountryFilter();
     } else if (selectId === 'country-filter') {
