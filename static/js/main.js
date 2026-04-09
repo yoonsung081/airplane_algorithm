@@ -248,10 +248,15 @@ function handleExampleClick() {
     calculateAndVisualize(originIata, destinationIata);
 }
 
+function getAlgorithmMode() {
+    const el = document.getElementById('algorithm-select');
+    return el && el.value ? el.value : 'both';
+}
+
 function calculateAndVisualize(originIata, destinationIata) {
     if (!originIata || !destinationIata) return;
     const data = calculateRouteLocally(originIata, destinationIata);
-    const algorithmMode = document.getElementById('algorithm-select').value;
+    const algorithmMode = getAlgorithmMode();
     clearScene();
     const directPath = [originIata, destinationIata];
     visualizeArc(directPath, 0xffc107, 'direct');
@@ -450,7 +455,11 @@ function displayRouteResults(data, algorithmMode) {
         data.dijkstra_path &&
         data.astar_path.join(',') === data.dijkstra_path.join(',');
 
-    let content = `<div class="path-result direct-path"><strong>직선 거리(대권):</strong> ${directKm} km</div>`;
+    let content = '';
+    if (algorithmMode === 'both') {
+        content += `<p class="text-center small text-white-50 mb-2">지도: 초록 A* · 시안 다익스트라 · 노랑 직선(대권 거리)</p>`;
+    }
+    content += `<div class="path-result direct-path"><strong>직선 거리(대권):</strong> ${directKm} km</div>`;
 
     if (algorithmMode === 'astar' || algorithmMode === 'both') {
         content += `<div class="path-result astar-path"><strong>A* 누적 비용:</strong> ${astarKm} units</div>`;
