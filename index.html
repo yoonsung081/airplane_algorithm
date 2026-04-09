@@ -19,6 +19,9 @@
         .astar-path { background: rgba(40, 167, 69, 0.2); border-left: 5px solid #28a745; }
         .dijkstra-path { background: rgba(13, 202, 240, 0.2); border-left: 5px solid #0dcaf0; }
         .direct-path { background: rgba(255, 193, 7, 0.2); border-left: 5px solid #ffc107; }
+        .explain-panel { background: rgba(255,255,255,0.06); border-radius: 8px; padding: 12px; border: 1px solid rgba(255,255,255,0.12); font-size: 0.85rem; line-height: 1.5; }
+        .explain-panel h6 { font-size: 0.9rem; margin-bottom: 0.5rem; color: #e7e7e7; }
+        .explain-panel ul { margin: 0; padding-left: 1.1rem; }
     </style>
 </head>
 <body>
@@ -80,10 +83,12 @@
         </div>
 
         <div id="results-panel"></div>
+        <div id="explain-panel" class="explain-panel mt-3" style="display: none;" aria-live="polite"></div>
+        <div id="sim-insight-panel" class="explain-panel mt-3" style="display: none;" aria-live="polite"></div>
     </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
-    <script src="./static/js/main.js?v=3"></script>
+    <script src="./static/js/main.js?v=4"></script>
 </body>
 </html>

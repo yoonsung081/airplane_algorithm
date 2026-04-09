@@ -33,6 +33,8 @@ let airplanes = [];
 let animationFrameId = null;
 let simulationSpeed = 1.0;
 let airplaneCount = 15;
+let lastSimInsightTime = 0;
+const SIM_INSIGHT_MS = 2800;
 
 // --- 애니메이션 루프 ---
 function animate() {
@@ -40,6 +42,7 @@ function animate() {
     controls.update();
     if (simulationRunning) {
         airplanes.forEach(plane => plane.update());
+        maybeRefreshSimulationInsight();
     }
     renderer.render(scene, camera);
 }
@@ -200,16 +203,33 @@ function switchMode(mode) {
     clearScene();
     document.getElementById('results-panel').innerHTML = '';
 
+    const explainEl = document.getElementById('explain-panel');
+    const simInsightEl = document.getElementById('sim-insight-panel');
+
     if (mode === 'search') {
         document.getElementById('search-panel').style.display = 'block';
         document.getElementById('sim-controls').style.display = 'none';
         document.getElementById('mode-search').classList.add('active');
         document.getElementById('mode-sim').classList.remove('active');
+        if (simInsightEl) {
+            simInsightEl.style.display = 'none';
+            simInsightEl.innerHTML = '';
+        }
+        if (explainEl) explainEl.style.display = 'none';
     } else {
         document.getElementById('search-panel').style.display = 'none';
         document.getElementById('sim-controls').style.display = 'block';
         document.getElementById('mode-search').classList.remove('active');
         document.getElementById('mode-sim').classList.add('active');
+        if (explainEl) {
+            explainEl.style.display = 'none';
+            explainEl.innerHTML = '';
+        }
+        if (simInsightEl) {
+            simInsightEl.style.display = 'block';
+            simInsightEl.innerHTML =
+                '<p class="small text-white-50 mb-0">시뮬레이션을 시작하면 약 3초마다 임의 항적을 골라, 같은 구간에 대해 <strong>그래프 최단 경로</strong> 기준 설명을 갱신합니다. (화면의 비행기는 시각용 직선 대권)</p>';
+        }
     }
 }
 
@@ -273,6 +293,7 @@ function calculateAndVisualize(originIata, destinationIata) {
     }
 
     displayRouteResults(data, algorithmMode);
+    showSearchExplanation(originIata, destinationIata, data, algorithmMode);
 }
 
 // --- 시뮬레이션 로직 ---
@@ -283,10 +304,21 @@ function toggleSimulation() {
     button.classList.toggle('btn-danger', simulationRunning);
     button.classList.toggle('btn-success', !simulationRunning);
 
-    if (simulationRunning && airplanes.length === 0) {
-        startSimulation();
-    } else if (!simulationRunning) {
+    const simInsightEl = document.getElementById('sim-insight-panel');
+    if (simulationRunning) {
+        lastSimInsightTime = 0;
+        if (simInsightEl && currentMode === 'sim') {
+            simInsightEl.style.display = 'block';
+        }
+        if (airplanes.length === 0) {
+            startSimulation();
+        }
+    } else {
         clearScene();
+        if (simInsightEl && currentMode === 'sim') {
+            simInsightEl.innerHTML =
+                '<p class="small text-white-50 mb-0">중지됨. 다시 시작하면 주기적으로 알고리즘 관점 해석이 표시됩니다.</p>';
+        }
     }
 }
 
@@ -487,6 +519,119 @@ function displayRouteResults(data, algorithmMode) {
     resultsPanel.innerHTML = content;
 }
 
+function pathLengthKmAlongPath(path) {
+    if (!path || path.length < 2) return 0;
+    let s = 0;
+    for (let i = 0; i < path.length - 1; i++) {
+        const a = airportsData[path[i]];
+        const b = airportsData[path[i + 1]];
+        if (a && b) s += haversineDistance(a, b);
+    }
+    return s;
+}
+
+function singleLegFeasibleInGraph(originIata, destIata) {
+    if (!airportsData[originIata] || !airportsData[destIata]) return false;
+    return haversineDistance(airportsData[originIata], airportsData[destIata]) <= MAX_DIRECT_DISTANCE_KM;
+}
+
+/** 경로 탐색: 왜 이런 계산을 했는지 (모델 + 알고리즘별) */
+function showSearchExplanation(originIata, destIata, data, algorithmMode) {
+    const el = document.getElementById('explain-panel');
+    if (!el || currentMode !== 'search') return;
+
+    const directKm = Math.round(data.direct_distance);
+    const oneHop = singleLegFeasibleInGraph(originIata, destIata);
+
+    let html = '<h6 class="mb-2">왜 이렇게 계산했나요?</h6>';
+    html += '<ul class="mb-2">';
+    html += `<li><strong>그래프</strong>: 두 공항 간 거리가 <strong>${MAX_DIRECT_DISTANCE_KM}km 이하</strong>일 때만 간선(직항 가능 구간)으로 연결했습니다.</li>`;
+    html += `<li><strong>간선 비용</strong>: 대권 거리(km) × <strong>${EFFICIENCY_FACTOR}</strong> → 누적 합이 경로의 총 비용(units)입니다.</li>`;
+    html += `<li><strong>직선 ${directKm}km</strong>는 참고용 대권 거리이며, 지도의 <strong>노란 선</strong>과 같은 개념입니다.</li>`;
+    if (!oneHop) {
+        html += `<li>이 출·도착지는 직선거리가 <strong>${MAX_DIRECT_DISTANCE_KM}km보다 김</strong> → 단 하나의 간선으로는 연결되지 않으므로, <strong>경유(여러 간선)</strong>가 필요합니다.</li>`;
+    } else {
+        html += `<li>직선거리가 ${MAX_DIRECT_DISTANCE_KM}km 이내라 <strong>단일 간선</strong>도 그래프에 있을 수 있습니다. 알고리즘은 그렇게 얻은 네트워크 위에서 <strong>비용 합 최소</strong> 경로를 고릅니다.</li>`;
+    }
+    html += '</ul>';
+
+    if (!data.astar_path) {
+        html += `<p class="mb-0 small text-warning">그래프로는 출발지에서 도착지까지 이어지는 경로가 없습니다. (중간 공항들을 거쳐도 연결이 안 되는 경우) 지도에는 직선만 그렸습니다.</p>`;
+        el.innerHTML = html;
+        el.style.display = 'block';
+        return;
+    }
+
+    const hops = data.astar_path.length - 1;
+    const pathKm = Math.round(pathLengthKmAlongPath(data.astar_path));
+    const cost = Math.round(data.astar_distance);
+
+    html += '<h6 class="mt-2 mb-1">알고리즘이 한 일</h6><ul class="mb-0">';
+
+    if (algorithmMode === 'astar' || algorithmMode === 'both') {
+        html +=
+            '<li><strong>A*</strong>: 각 공항에서 목적지까지의 <strong>대권 직선 거리</strong>를 휴리스틱(추정치)으로 씁니다. 간선 비용은 음이 아니고, 휴리스틱은 실제 최단 거리를 <strong>과대평가하지 않아</strong> 허용 가능합니다. 그래서 “목표로 갈 가능성이 큰” 공항을 우선 펼쳐 <strong>덜 탐색하고도</strong> 최소 비용 경로(다익스트라와 동일 비용)를 찾을 수 있습니다.</li>';
+    }
+    if (algorithmMode === 'dijkstra' || algorithmMode === 'both') {
+        html +=
+            '<li><strong>다익스트라</strong>: 시작점에서부터 <strong>지금까지의 누적 비용이 작은 공항</strong>부터 확정해 나갑니다. 휴리스틱 없이 전 구역을 비용 순으로 퍼나가며, 음의 간선 비용이 없다는 전제에서 <strong>최소 누적 비용</strong> 경로가 보장됩니다.</li>';
+    }
+    if (algorithmMode === 'both') {
+        html +=
+            '<li><strong>둘 다 같은 그래프·같은 비용</strong>이면 최종 비용은 같게 나오는 것이 정상입니다. (경로 문자열이 같다면 동일 경로, 비용만 같으면 동률인 다른 최적 경로일 수 있습니다.)</li>';
+    }
+
+    html += `<li class="mt-1"><strong>이번 결과</strong>: <strong>${hops}번</strong> 경유, 간선 길이 합 약 <strong>${pathKm}km</strong>, 누적 비용 <strong>${cost}units</strong>.</li>`;
+    html += '</ul>';
+
+    el.innerHTML = html;
+    el.style.display = 'block';
+}
+
+function maybeRefreshSimulationInsight() {
+    const simInsightEl = document.getElementById('sim-insight-panel');
+    if (!simInsightEl || currentMode !== 'sim' || airplanes.length === 0) return;
+
+    const now = performance.now();
+    if (now - lastSimInsightTime < SIM_INSIGHT_MS) return;
+    lastSimInsightTime = now;
+
+    const plane = airplanes[Math.floor(Math.random() * airplanes.length)];
+    if (!plane.origin || !plane.destination) return;
+    const o = plane.origin.iata_code;
+    const d = plane.destination.iata_code;
+    if (o === d) return;
+
+    const data = calculateRouteLocally(o, d);
+    const directKm = Math.round(haversineDistance(airportsData[o], airportsData[d]));
+    const oneHop = singleLegFeasibleInGraph(o, d);
+
+    let html = '<h6 class="mb-2">실시간 해석 (샘플 항적)</h6>';
+    html += `<p class="mb-2 small">표본: <strong>${o} → ${d}</strong> · 직선 거리 약 <strong>${directKm}km</strong></p>`;
+
+    if (data.astar_path) {
+        const hops = data.astar_path.length - 1;
+        const pathKm = Math.round(pathLengthKmAlongPath(data.astar_path));
+        const astarCost = Math.round(data.astar_distance);
+        const dijkCost = data.dijkstra_distance != null ? Math.round(data.dijkstra_distance) : astarCost;
+
+        html += '<ul class="mb-2">';
+        html += `<li><strong>알고리즘 기준 (동일 비용)</strong>: A*·다익스트라 모두 이 그래프에서 약 <strong>${astarCost}units</strong> (${hops}구간, 간선 합 거리 약 ${pathKm}km).</li>`;
+        if (!oneHop) {
+            html += `<li><strong>이득(실행 가능성)</strong>: 직선이 <strong>${MAX_DIRECT_DISTANCE_KM}km보다 길어</strong> 한 번에 연결할 수 없습니다. 경유 최적 경로를 쓰지 않으면 이 네트워크 모델로는 <strong>아예 도착 불가</strong>에 가깝습니다. 알고리즘은 “가능한 비행 구간”만으로 <strong>도달 가능한 최저 비용</strong>을 줍니다.</li>`;
+        } else {
+            html += `<li><strong>이득</strong>: 단일 간선도 있지만, 여러 간선을 합친 경로가 <strong>누적 비용이 더 작을 수</strong> 있습니다. 화면 비행기는 <strong>직선 대권</strong>만 따르므로 이 수치와는 별개입니다.</li>`;
+        }
+        html += `<li class="small text-white-50">직선 ${directKm}km와 units는 단위가 다릅니다. 비교는 “같은 모델 안에서의 최적 경로”로 보시면 됩니다.</li>`;
+        html += '</ul>';
+        html += `<p class="mb-0 small"><strong>실시간 요약</strong>: 다익≈<strong>${dijkCost}</strong> units · A*≈<strong>${astarCost}</strong> units (동일 그래프 최적)</p>`;
+    } else {
+        html += `<p class="mb-0 small text-warning">이 샘플 구간은 그래프에 경로가 없습니다. 화면의 비행기는 직선만 비행하는 중입니다.</p>`;
+    }
+
+    simInsightEl.innerHTML = html;
+}
+
 function latLonToVector3(lat, lon, radius) {
     const phi = (90 - lat) * (Math.PI / 180);
     const theta = (lon + 180) * (Math.PI / 180);
@@ -535,10 +680,19 @@ function setUiLoadingState(isLoading, message = '') {
     calculateButton.disabled = isLoading;
     exampleButton.disabled = isLoading;
     simButton.disabled = isLoading;
+    const explainEl = document.getElementById('explain-panel');
     if (message) {
         document.getElementById('results-panel').innerHTML = `<p class="text-center text-warning">${message}</p>`;
+        if (explainEl) {
+            explainEl.innerHTML = '';
+            explainEl.style.display = 'none';
+        }
     } else if (!isLoading) {
         document.getElementById('results-panel').innerHTML = '';
+        if (explainEl) {
+            explainEl.innerHTML = '';
+            explainEl.style.display = 'none';
+        }
     }
 }
 
