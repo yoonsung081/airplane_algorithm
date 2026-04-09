@@ -1,9 +1,9 @@
-# GitHub Pages 정적 배포
-# Settings → Pages → Source: GitHub Actions
+# GitHub Pages — 정적 파일 배포
+# 저장소: Settings → Pages → Build and deployment → Source: GitHub Actions
 #
-# deploy-pages는 "이 run 안에서 artifact_name과 일치하는 아티팩트가 정확히 1개"여야 합니다.
-# upload/deploy를 job으로 나누고, 기본값 "github-pages"가 아닌 고유 이름을 써서
-# Re-run 시 쌓인 github-pages 아티팩트와 충돌하지 않게 합니다.
+# "Multiple artifacts named github-pages": 같은 workflow run에서 Re-run 할 때마다
+# 기본 이름 github-pages 아티팩트가 하나씩 더 쌓입니다. 아티팩트 이름을 run마다 고유하게 씁니다.
+# 로그에 "Fetching artifact metadata for github-pages"만 보이면 artifact_name이 비어 기본값이 쓰인 것입니다.
 
 name: Deploy static site to GitHub Pages
 
@@ -26,14 +26,23 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      pages_artifact: ${{ steps.names.outputs.pages_artifact }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Artifact name for this run
+        id: names
+        run: |
+          n="airplane-site-${{ github.run_id }}-${{ github.run_attempt }}"
+          echo "pages_artifact=${n}" >> "${GITHUB_OUTPUT}"
+          echo "Using artifact name: ${n}"
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          name: airplane-algorithm-site-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ${{ steps.names.outputs.pages_artifact }}
           path: .
 
   deploy:
@@ -43,8 +52,13 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - name: Verify artifact name (debug)
+        run: |
+          echo "Deploy will use artifact: '${{ needs.build.outputs.pages_artifact }}'"
+          test -n "${{ needs.build.outputs.pages_artifact }}"
+
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v5
         with:
-          artifact_name: airplane-algorithm-site-${{ github.run_id }}-${{ github.run_attempt }}
+          artifact_name: ${{ needs.build.outputs.pages_artifact }}
