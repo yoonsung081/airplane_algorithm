@@ -1,3 +1,5 @@
+# GitHub Pages: 정적 파일(index.html, static/, CSV) 배포
+# 저장소에서 Pages를 켜야 합니다: Settings → Pages → Build and deployment → Source: GitHub Actions
 name: Deploy static site to GitHub Pages
 
 on:
@@ -15,7 +17,7 @@ permissions:
 
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   deploy:
@@ -27,8 +29,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Pages
-        uses: actions/configure-pages@v5
+      # configure-pages는 “Pages 사이트가 이미 존재”할 때만 동작합니다.
+      # Pages를 아직 GitHub Actions로 켜지 않은 상태면 GET /pages 가 404가 나므로 생략합니다.
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
@@ -37,4 +39,4 @@ jobs:
 
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
