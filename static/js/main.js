@@ -24,6 +24,9 @@ scene.add(earth);
 // --- 전역 변수 ---
 let allAirports = [];
 let airportsData = {};
+let airportGraph = {};
+const MAX_DIRECT_DISTANCE_KM = 3000;
+const EFFICIENCY_FACTOR = 0.7;
 let currentMode = 'search';
 let simulationRunning = false;
 let airplanes = [];
@@ -43,19 +46,18 @@ function animate() {
 
 // --- 초기화 ---
 function init() {
-    fetch('/airports')
-        .then(response => response.json())
-        .then(data => {
-            allAirports = data;
-            allAirports.forEach(airport => {
-                if (airport.iata_code) {
-                    airportsData[airport.iata_code] = airport;
-                }
-            });
+    setupEventListeners();
+    setUiLoadingState(true, '데이터 로딩 중...');
+    loadDataForStaticHosting()
+        .then(() => {
             populateFilters();
             updateAirportSelects();
+            setUiLoadingState(false);
+        })
+        .catch((error) => {
+            console.error(error);
+            setUiLoadingState(true, '데이터 로딩 실패 (CSV 파일 경로를 확인하세요)');
         });
-    setupEventListeners();
     animate();
 }
 
@@ -235,21 +237,14 @@ function handleExampleClick() {
 
 function calculateAndVisualize(originIata, destinationIata) {
     if (!originIata || !destinationIata) return;
-    fetch('/calculate_route', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ origin: originIata, destination: destinationIata })
-    })
-    .then(response => response.json())
-    .then(data => {
-        clearScene();
-        if (data.path) {
-            visualizeArc(data.path, 0x28a745, 'astar');
-            const directPath = [originIata, destinationIata];
-            visualizeArc(directPath, 0xffc107, 'direct');
-            displayResults(data.astar_distance, data.direct_distance, data.path);
-        }
-    });
+    const data = calculateRouteLocally(originIata, destinationIata);
+    clearScene();
+    if (data.path) {
+        visualizeArc(data.path, 0x28a745, 'astar');
+        const directPath = [originIata, destinationIata];
+        visualizeArc(directPath, 0xffc107, 'direct');
+        displayResults(data.astar_distance, data.direct_distance, data.path);
+    }
 }
 
 // --- 시뮬레이션 로직 ---
@@ -467,6 +462,207 @@ function clearScene() {
         }
     });
     airplanes = [];
+}
+
+function setUiLoadingState(isLoading, message = '') {
+    const calculateButton = document.getElementById('calculate');
+    const exampleButton = document.getElementById('show-example');
+    const simButton = document.getElementById('toggle-sim');
+    calculateButton.disabled = isLoading;
+    exampleButton.disabled = isLoading;
+    simButton.disabled = isLoading;
+    if (message) {
+        document.getElementById('results-panel').innerHTML = `<p class="text-center text-warning">${message}</p>`;
+    } else if (!isLoading) {
+        document.getElementById('results-panel').innerHTML = '';
+    }
+}
+
+async function loadDataForStaticHosting() {
+    const [airportsCsv, runwaysCsv] = await Promise.all([
+        fetch('./airports_all.csv').then((res) => {
+            if (!res.ok) throw new Error('airports_all.csv 로딩 실패');
+            return res.text();
+        }),
+        fetch('./runways.csv').then((res) => {
+            if (!res.ok) throw new Error('runways.csv 로딩 실패');
+            return res.text();
+        })
+    ]);
+
+    const runwayRows = parseCSV(runwaysCsv);
+    const runwayAirportIds = new Set();
+    runwayRows.forEach((row) => {
+        if (row.airport_ref) {
+            runwayAirportIds.add(row.airport_ref);
+        }
+    });
+
+    const airportRows = parseCSV(airportsCsv);
+    allAirports = [];
+    airportsData = {};
+    airportGraph = {};
+
+    airportRows.forEach((row) => {
+        const isValidType = row.type === 'medium_airport' || row.type === 'large_airport';
+        const hasScheduledService = row.scheduled_service === 'yes';
+        const hasIataCode = Boolean(row.iata_code);
+        const hasRunway = runwayAirportIds.has(row.id);
+        if (!isValidType || !hasScheduledService || !hasIataCode || !hasRunway) return;
+
+        const latitude = Number.parseFloat(row.latitude_deg);
+        const longitude = Number.parseFloat(row.longitude_deg);
+        if (Number.isNaN(latitude) || Number.isNaN(longitude)) return;
+
+        const airport = {
+            id: row.id,
+            iata_code: row.iata_code,
+            name: row.name,
+            type: row.type,
+            latitude,
+            longitude,
+            iso_country: row.iso_country,
+            continent: row.continent
+        };
+
+        allAirports.push(airport);
+        airportsData[airport.iata_code] = airport;
+    });
+
+    buildAirportGraph();
+}
+
+function buildAirportGraph() {
+    for (let i = 0; i < allAirports.length; i++) {
+        const airport1 = allAirports[i];
+        const iata1 = airport1.iata_code;
+        if (!airportGraph[iata1]) {
+            airportGraph[iata1] = [];
+        }
+        for (let j = i + 1; j < allAirports.length; j++) {
+            const airport2 = allAirports[j];
+            const iata2 = airport2.iata_code;
+            const distance = haversineDistance(airport1, airport2);
+            if (distance <= MAX_DIRECT_DISTANCE_KM) {
+                if (!airportGraph[iata2]) {
+                    airportGraph[iata2] = [];
+                }
+                const efficientDistance = distance * EFFICIENCY_FACTOR;
+                airportGraph[iata1].push([iata2, efficientDistance]);
+                airportGraph[iata2].push([iata1, efficientDistance]);
+            }
+        }
+    }
+}
+
+function calculateRouteLocally(originIata, destinationIata) {
+    if (!originIata || !destinationIata || !airportsData[originIata] || !airportsData[destinationIata]) {
+        return { path: null, astar_distance: null, direct_distance: null };
+    }
+    const [path, astarCost] = aStarSearch(originIata, destinationIata);
+    const directDistance = haversineDistance(airportsData[originIata], airportsData[destinationIata]);
+    if (path) {
+        return { path, astar_distance: astarCost, direct_distance: directDistance };
+    }
+    return {
+        path: [originIata, destinationIata],
+        astar_distance: null,
+        direct_distance: directDistance
+    };
+}
+
+function aStarSearch(startNode, goalNode) {
+    if (!airportGraph[startNode] || !airportGraph[goalNode]) {
+        return [null, Infinity];
+    }
+
+    const openSet = [[0, startNode]];
+    const cameFrom = {};
+    const gScore = {};
+    const fScore = {};
+    Object.keys(airportGraph).forEach((node) => {
+        gScore[node] = Infinity;
+        fScore[node] = Infinity;
+    });
+    gScore[startNode] = 0;
+    fScore[startNode] = haversineDistance(airportsData[startNode], airportsData[goalNode]);
+
+    while (openSet.length > 0) {
+        openSet.sort((a, b) => a[0] - b[0]);
+        const [, current] = openSet.shift();
+
+        if (current === goalNode) {
+            const path = [];
+            let node = current;
+            while (cameFrom[node]) {
+                path.push(node);
+                node = cameFrom[node];
+            }
+            path.push(startNode);
+            return [path.reverse(), gScore[goalNode]];
+        }
+
+        const neighbors = airportGraph[current] || [];
+        neighbors.forEach(([neighbor, distance]) => {
+            const tentativeGScore = gScore[current] + distance;
+            if (tentativeGScore < (gScore[neighbor] ?? Infinity)) {
+                cameFrom[neighbor] = current;
+                gScore[neighbor] = tentativeGScore;
+                const hScore = haversineDistance(airportsData[neighbor], airportsData[goalNode]);
+                fScore[neighbor] = tentativeGScore + hScore;
+                openSet.push([fScore[neighbor], neighbor]);
+            }
+        });
+    }
+
+    return [null, Infinity];
+}
+
+function parseCSV(text) {
+    const rows = [];
+    let row = [];
+    let value = '';
+    let inQuotes = false;
+    for (let i = 0; i < text.length; i++) {
+        const char = text[i];
+        const nextChar = text[i + 1];
+
+        if (char === '"') {
+            if (inQuotes && nextChar === '"') {
+                value += '"';
+                i++;
+            } else {
+                inQuotes = !inQuotes;
+            }
+        } else if (char === ',' && !inQuotes) {
+            row.push(value);
+            value = '';
+        } else if ((char === '\n' || char === '\r') && !inQuotes) {
+            if (char === '\r' && nextChar === '\n') i++;
+            row.push(value);
+            value = '';
+            if (row.some((cell) => cell !== '')) {
+                rows.push(row);
+            }
+            row = [];
+        } else {
+            value += char;
+        }
+    }
+    if (value.length > 0 || row.length > 0) {
+        row.push(value);
+        rows.push(row);
+    }
+    if (rows.length === 0) return [];
+
+    const headers = rows[0].map((header) => header.trim());
+    return rows.slice(1).map((cells) => {
+        const obj = {};
+        headers.forEach((header, index) => {
+            obj[header] = (cells[index] ?? '').trim();
+        });
+        return obj;
+    });
 }
 
 // --- 실행 ---
